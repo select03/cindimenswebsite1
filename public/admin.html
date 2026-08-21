@@ -1544,10 +1544,19 @@
       collectAssetsFromDOM();
       collectSiteInfoFromDOM();
 
+      // Always attempt to save to local dev server disk if running
+      try {
+        fetch('/api/save-local-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: currentContent })
+        }).catch(() => {});
+      } catch (e) {}
+
       const apiBase = getApiBase();
       if (!apiBase) {
         openWorkerSettingsModal();
-        showToast('請先設定您的 Cloudflare Worker 網址', 'error');
+        showToast('請先設定您的 Cloudflare Worker 網址以發佈至 GitHub', 'error');
         return;
       }
 

@@ -165,6 +165,8 @@ export const Hero: React.FC<HeroProps> = ({ onNavigate, onOpenQuiz, onPlayTraile
                         const ytThumb = getYouTubeThumbnailUrl(item.videoUrl);
                         if (ytThumb && e.currentTarget.src !== ytThumb) {
                           e.currentTarget.src = ytThumb;
+                        } else if (item.id === 'shell-lubricants-ad' || item.title.includes('Shell') || item.title.includes('喜力')) {
+                          e.currentTarget.src = '/images/shell.svg';
                         }
                       }}
                     />

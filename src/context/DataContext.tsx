@@ -127,6 +127,12 @@ function mergePortfolioWithDefaults(remoteItems: PortfolioItem[] | undefined, de
     
     const remote = remoteMap.get(canonicalId);
     if (remote) {
+      let resolvedImage = remote.image || defCase.image;
+      // If remote image is the outdated Unsplash placeholder for Shell, use defCase.image (/images/shell.svg)
+      if (canonicalId === 'shell-lubricants-ad' && (resolvedImage.includes('photo-1486006920555') || !resolvedImage)) {
+        resolvedImage = defCase.image || '/images/shell.svg';
+      }
+
       merged.push({
         ...defCase,
         ...remote,
@@ -138,7 +144,7 @@ function mergePortfolioWithDefaults(remoteItems: PortfolioItem[] | undefined, de
         description: defCase.description,
         role: defCase.role,
         tags: defCase.tags,
-        image: remote.image || defCase.image,
+        image: resolvedImage,
         videoUrl: defCase.videoUrl || remote.videoUrl,
         highlights: defCase.highlights
       });
@@ -160,8 +166,8 @@ function mergePortfolioWithDefaults(remoteItems: PortfolioItem[] | undefined, de
 }
 
 const DEFAULT_ASSETS: SiteAssets = {
-  logo: '',
-  founderImage: FOUNDER_INFO.image
+  logo: '/images/logo.svg',
+  founderImage: '/images/avatar.svg'
 };
 
 const DEFAULT_SITE_INFO: SiteMetaInfo = {
@@ -309,11 +315,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [leads]);
 
-  // Sync from remote (GitHub content.json / Cloudflare Worker / public content.json)
+  // Sync from remote (GitHub content.json / Cloudflare Worker / public content.json / server disk sync)
   const syncFromRemote = useCallback(async () => {
     setIsSyncingRemote(true);
     const workerUrl = (localStorage.getItem('cms_worker_url') || '').trim().replace(/\/+$/, '');
     const token = (localStorage.getItem('cms_auth_token') || '').trim();
+
+    // Trigger local server-side GitHub fetch in dev mode to ensure container files are updated
+    try {
+      fetch('/api/sync-github-content').catch(() => {});
+    } catch (e) {}
 
     const fetchSources: { name: string; url: string; headers?: Record<string, string> }[] = [];
 
@@ -368,13 +379,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (rawData) {
       // A. Update Assets (Logo & Founder Avatar)
       if (rawData.assets) {
-        const newLogo = rawData.assets.logo || '';
-        const newFounderImg = rawData.assets.founderImage || rawData.assets.avatar || '';
+        const newLogo = (rawData.assets.logo || '').trim();
+        const newFounderImg = (rawData.assets.founderImage || rawData.assets.avatar || '').trim();
 
         setAssets(prev => ({
           ...prev,
-          logo: newLogo || prev.logo,
-          founderImage: newFounderImg || prev.founderImage
+          logo: newLogo || prev.logo || '/images/logo.svg',
+          founderImage: newFounderImg || prev.founderImage || '/images/avatar.svg'
         }));
 
         if (newFounderImg) {

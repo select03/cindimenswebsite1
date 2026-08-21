@@ -68,6 +68,8 @@ export const PortfolioShowcase: React.FC = () => {
                       const ytThumb = getYouTubeThumbnailUrl(item.videoUrl);
                       if (ytThumb && e.currentTarget.src !== ytThumb) {
                         e.currentTarget.src = ytThumb;
+                      } else if (item.id === 'shell-lubricants-ad' || item.title.includes('Shell') || item.title.includes('喜力')) {
+                        e.currentTarget.src = '/images/shell.svg';
                       }
                     }}
                   />
@@ -176,12 +178,17 @@ export const PortfolioShowcase: React.FC = () => {
                 />
               </div>
             ) : (
-              <div className="aspect-video rounded overflow-hidden mb-4 border border-stone-300">
+              <div className="aspect-video rounded overflow-hidden mb-4 border border-stone-300 bg-stone-200">
                 <img
-                  src={selectedCase.image}
+                  src={selectedCase.image || '/images/shell.svg'}
                   alt={selectedCase.title}
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    if (selectedCase.id === 'shell-lubricants-ad' || selectedCase.title.includes('Shell')) {
+                      e.currentTarget.src = '/images/shell.svg';
+                    }
+                  }}
                 />
               </div>
             )}

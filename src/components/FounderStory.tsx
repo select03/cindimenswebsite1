@@ -53,16 +53,7 @@ export const FounderStory: React.FC<FounderStoryProps> = ({ onNavigate, onOpenCo
         <div className="mb-10 p-6 sm:p-8 rounded-2xl bg-[#EFECE6] border border-stone-300 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-left">
           <div className="flex flex-col sm:flex-row items-center gap-6">
             <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl bg-[#F6F4EE] border border-stone-300 p-3 shadow-sm flex items-center justify-center shrink-0">
-              {assets?.logo ? (
-                <img 
-                  src={assets.logo} 
-                  alt="維度影學 Cine Dimension" 
-                  className="w-full h-full object-contain"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <CineDimensionLogo size="xl" showText={false} />
-              )}
+              <CineDimensionLogo size="xl" showText={false} customLogo={assets?.logo || '/images/logo.svg'} />
             </div>
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-center md:justify-start gap-2.5">
@@ -101,10 +92,15 @@ export const FounderStory: React.FC<FounderStoryProps> = ({ onNavigate, onOpenCo
             <div className="md:col-span-4">
               <div className="aspect-[3/4] rounded-xl overflow-hidden border border-stone-300 shadow-sm relative group bg-stone-200">
                 <img
-                  src={founderInfo.image}
+                  src={founderInfo.image || '/images/avatar.svg'}
                   alt={`${founderInfo.name}（${founderInfo.nickname}）`}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    if (e.currentTarget.src !== '/images/avatar.svg') {
+                      e.currentTarget.src = '/images/avatar.svg';
+                    }
+                  }}
                 />
               </div>
             </div>
