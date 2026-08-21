@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { FounderInfo, ServiceItem, PortfolioItem, Testimonial, InquiryLead, SiteAssets, SiteMetaInfo } from '../types';
 import { FOUNDER_INFO, SERVICES_CATALOG, PORTFOLIO_CASES, TESTIMONIALS } from '../data/siteData';
 
-interface DataContextType {
+export interface DataContextType {
   assets: SiteAssets;
   siteInfo: SiteMetaInfo;
   founderInfo: FounderInfo;
@@ -10,7 +10,9 @@ interface DataContextType {
   portfolio: PortfolioItem[];
   testimonials: Testimonial[];
   leads: InquiryLead[];
+  isLoading: boolean;
   isSyncingRemote: boolean;
+  fetchError: string | null;
   lastSyncTime: string | null;
   syncFromRemote: () => Promise<void>;
   updateAssets: (data: Partial<SiteAssets>) => void;
@@ -31,12 +33,12 @@ interface DataContextType {
 }
 
 const STORAGE_KEYS = {
-  ASSETS: 'cine_dimension_assets_v15',
-  SITE_INFO: 'cine_dimension_siteinfo_v15',
-  FOUNDER: 'cine_dimension_founder_v15',
-  SERVICES: 'cine_dimension_services_v15',
-  PORTFOLIO: 'cine_dimension_portfolio_v15',
-  TESTIMONIALS: 'cine_dimension_testimonials_v15',
+  ASSETS: 'cine_dimension_assets_v16',
+  SITE_INFO: 'cine_dimension_siteinfo_v16',
+  FOUNDER: 'cine_dimension_founder_v16',
+  SERVICES: 'cine_dimension_services_v16',
+  PORTFOLIO: 'cine_dimension_portfolio_v16',
+  TESTIMONIALS: 'cine_dimension_testimonials_v16',
   LEADS: 'cinedimension_inquiries'
 };
 
@@ -44,19 +46,14 @@ const CANONICAL_ID_MAP: Record<string, string> = {
   'chiayi-farmers-workshop': 'zhuqi-farmers-association',
   'zhuqi-farmers-short-video': 'zhuqi-farmers-association',
   'zhuqi-farmers-association': 'zhuqi-farmers-association',
-  
   'kaohsiung-qijin-travel-film': 'kaohsiung-qijin-travel-film',
-  
   'jimo-ancient-city-film': 'jimo-ancient-city-film',
-  
   'indie-music-video': 'band-mv-music-video',
   'band-mv-music-video': 'band-mv-music-video',
-  
   'shell-app-guide': 'shell-lubricants-ad',
   'shell-helix-app-promo-guide': 'shell-lubricants-ad',
   'shell-lubricants-ad': 'shell-lubricants-ad',
   'shell-helix-promo': 'shell-lubricants-ad',
-  
   'wedding-films-collection': 'wedding-films-collection',
   'wedding-film-collection': 'wedding-films-collection',
   'wedding-films': 'wedding-films-collection'
@@ -97,7 +94,6 @@ function mergePortfolioWithDefaults(remoteItems: PortfolioItem[] | undefined, de
     return defaultCases;
   }
   
-  // Normalize remote items map by canonical ID
   const remoteMap = new Map<string, PortfolioItem>();
   remoteItems.forEach(rawItem => {
     if (rawItem) {
@@ -120,7 +116,6 @@ function mergePortfolioWithDefaults(remoteItems: PortfolioItem[] | undefined, de
   const merged: PortfolioItem[] = [];
   const processedCanonicalIds = new Set<string>();
 
-  // 1. Process all default cases in strict order
   for (const defCase of defaultCases) {
     const canonicalId = getCanonicalId(defCase);
     processedCanonicalIds.add(canonicalId);
@@ -128,7 +123,6 @@ function mergePortfolioWithDefaults(remoteItems: PortfolioItem[] | undefined, de
     const remote = remoteMap.get(canonicalId);
     if (remote) {
       let resolvedImage = remote.image || defCase.image;
-      // If remote image is the outdated Unsplash placeholder for Shell, use defCase.image (/images/shell.svg)
       if (canonicalId === 'shell-lubricants-ad' && (resolvedImage.includes('photo-1486006920555') || !resolvedImage)) {
         resolvedImage = defCase.image || '/images/shell.svg';
       }
@@ -154,7 +148,6 @@ function mergePortfolioWithDefaults(remoteItems: PortfolioItem[] | undefined, de
     }
   }
 
-  // 2. Append genuine new user-created custom items (not aliases of the 6 defaults)
   for (const [key, extraItem] of remoteMap.entries()) {
     if (!processedCanonicalIds.has(key)) {
       processedCanonicalIds.add(key);
@@ -182,6 +175,11 @@ const DEFAULT_SITE_INFO: SiteMetaInfo = {
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [isSyncingRemote, setIsSyncingRemote] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+
   const [assets, setAssets] = useState<SiteAssets>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ASSETS);
@@ -255,9 +253,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return [];
   });
 
-  const [isSyncingRemote, setIsSyncingRemote] = useState<boolean>(false);
-  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
-
   // Sync to local storage
   useEffect(() => {
     try {
@@ -315,44 +310,36 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [leads]);
 
-  // Sync from remote (GitHub content.json / Cloudflare Worker / public content.json / server disk sync)
+  // Dynamic Runtime Data Fetching Engine
   const syncFromRemote = useCallback(async () => {
     setIsSyncingRemote(true);
+    setFetchError(null);
+
     const workerUrl = (localStorage.getItem('cms_worker_url') || '').trim().replace(/\/+$/, '');
     const token = (localStorage.getItem('cms_auth_token') || '').trim();
 
-    // Trigger local server-side GitHub fetch in dev mode to ensure container files are updated
-    try {
-      fetch('/api/sync-github-content').catch(() => {});
-    } catch (e) {}
-
+    const timestamp = Date.now();
     const fetchSources: { name: string; url: string; headers?: Record<string, string> }[] = [];
 
-    // 1. Worker API endpoint (if workerUrl configured)
+    // 1. Cloudflare Worker API (if configured in CMS)
     if (workerUrl && token) {
       fetchSources.push({
         name: 'Cloudflare Worker API',
-        url: `${workerUrl}/api/content`,
+        url: `${workerUrl}/api/content?_t=${timestamp}`,
         headers: { 'Authorization': `Bearer ${token}` }
       });
     }
 
-    // 2. Direct GitHub Raw URL (Always fresh from cindimenswebsite1 repo)
+    // 2. Direct GitHub Raw URL (GitHub remote content.json)
     fetchSources.push({
       name: 'GitHub Raw Content (cindimenswebsite1)',
-      url: `https://raw.githubusercontent.com/select03/cindimenswebsite1/main/content.json?_t=${Date.now()}`
+      url: `https://raw.githubusercontent.com/select03/cindimenswebsite1/main/content.json?_t=${timestamp}`
     });
 
-    // Fallback: previous repo name if migrated
+    // 3. Dynamic Local / Static ./content.json with cache-busting
     fetchSources.push({
-      name: 'GitHub Raw Content (cindimenswebsite fallback)',
-      url: `https://raw.githubusercontent.com/select03/cindimenswebsite/main/content.json?_t=${Date.now()}`
-    });
-
-    // 3. Local / public content.json
-    fetchSources.push({
-      name: 'Local Site Content JSON',
-      url: `/content.json?_t=${Date.now()}`
+      name: 'Dynamic Static content.json',
+      url: `./content.json?_t=${timestamp}`
     });
 
     let rawData: any = null;
@@ -365,14 +352,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         if (res.ok) {
           const json = await res.json();
-          // Worker returns { exists: true, content: {...} }, Raw returns {...} directly
-          rawData = json.content || json;
-          if (rawData && (rawData.portfolio || rawData.assets || rawData.siteInfo)) {
+          const content = json.content || json;
+          if (content && (content.portfolio || content.assets || content.siteInfo)) {
+            rawData = content;
             break;
           }
         }
       } catch (err) {
-        // Try next source
+        // Continue to fallback source
       }
     }
 
@@ -417,7 +404,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // C. Update Portfolio (Shell image, Chiayi Farmers workshop, etc.)
+      // C. Update Portfolio
       if (Array.isArray(rawData.portfolio) && rawData.portfolio.length > 0) {
         setPortfolio(mergePortfolioWithDefaults(rawData.portfolio, PORTFOLIO_CASES));
       }
@@ -426,9 +413,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setIsSyncingRemote(false);
+    setIsLoading(false);
   }, []);
 
-  // Fetch on mount and listen to custom updates
+  // Initial fetch on app mount
   useEffect(() => {
     syncFromRemote();
 
@@ -451,7 +439,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const newImg = data.founderImage || data.avatar;
       if (newImg) {
         next.founderImage = newImg;
-        next.avatar = newImg;
         setFounderInfo(f => ({ ...f, image: newImg }));
       }
       return next;
@@ -463,22 +450,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addLead = (lead: Partial<InquiryLead>) => {
-    const newLeadItem: InquiryLead = {
-      id: lead.id || 'lead-' + Date.now(),
-      timestamp: lead.timestamp || new Date().toLocaleString(),
+    const newLead: InquiryLead = {
+      id: `lead_${Date.now()}`,
+      timestamp: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }),
       name: lead.name || '',
       email: lead.email || '',
       phone: lead.phone || '',
       organization: lead.organization || '',
-      serviceType: lead.serviceType || lead.serviceRequested || '',
-      serviceRequested: lead.serviceType || lead.serviceRequested || '',
-      budgetRange: lead.budgetRange || '',
-      preferredTime: lead.preferredTime || '',
+      serviceType: lead.serviceType || lead.serviceRequested || '未指定',
+      serviceRequested: lead.serviceRequested || lead.serviceType || '未指定',
+      budgetRange: lead.budgetRange || '未提供',
+      preferredTime: lead.preferredTime || '未提供',
       message: lead.message || '',
-      driveStatus: lead.driveStatus || 'Local Recorded',
+      driveStatus: lead.driveStatus || '已本機備份',
       botVerified: lead.botVerified ?? true
     };
-    setLeads(prev => [newLeadItem, ...prev]);
+    setLeads(prev => [newLead, ...prev]);
   };
 
   const updateFounderInfo = (data: Partial<FounderInfo>) => {
@@ -493,11 +480,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addService = (service: ServiceItem) => {
-    setServices(prev => [service, ...prev]);
+    setServices(prev => [...prev, service]);
   };
 
-  const updateService = (updated: ServiceItem) => {
-    setServices(prev => prev.map(s => (s.id === updated.id ? updated : s)));
+  const updateService = (service: ServiceItem) => {
+    setServices(prev => prev.map(s => s.id === service.id ? service : s));
   };
 
   const deleteService = (id: string) => {
@@ -508,20 +495,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setPortfolio(prev => [item, ...prev]);
   };
 
-  const updatePortfolioItem = (updated: PortfolioItem) => {
-    setPortfolio(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+  const updatePortfolioItem = (item: PortfolioItem) => {
+    setPortfolio(prev => prev.map(p => p.id === item.id ? item : p));
   };
 
   const deletePortfolioItem = (id: string) => {
     setPortfolio(prev => prev.filter(p => p.id !== id));
   };
 
-  const addTestimonial = (item: Testimonial) => {
-    setTestimonials(prev => [item, ...prev]);
+  const addTestimonial = (testimonial: Testimonial) => {
+    setTestimonials(prev => [...prev, testimonial]);
   };
 
-  const updateTestimonial = (updated: Testimonial) => {
-    setTestimonials(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+  const updateTestimonial = (testimonial: Testimonial) => {
+    setTestimonials(prev => prev.map(t => t.id === testimonial.id ? testimonial : t));
   };
 
   const deleteTestimonial = (id: string) => {
@@ -529,59 +516,61 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetToDefault = () => {
-    localStorage.removeItem(STORAGE_KEYS.ASSETS);
-    localStorage.removeItem(STORAGE_KEYS.SITE_INFO);
-    localStorage.removeItem(STORAGE_KEYS.FOUNDER);
-    localStorage.removeItem(STORAGE_KEYS.SERVICES);
-    localStorage.removeItem(STORAGE_KEYS.PORTFOLIO);
-    localStorage.removeItem(STORAGE_KEYS.TESTIMONIALS);
     setAssets(DEFAULT_ASSETS);
     setSiteInfo(DEFAULT_SITE_INFO);
     setFounderInfo(FOUNDER_INFO);
     setServices(SERVICES_CATALOG);
     setPortfolio(PORTFOLIO_CASES);
     setTestimonials(TESTIMONIALS);
+    localStorage.removeItem(STORAGE_KEYS.ASSETS);
+    localStorage.removeItem(STORAGE_KEYS.SITE_INFO);
+    localStorage.removeItem(STORAGE_KEYS.FOUNDER);
+    localStorage.removeItem(STORAGE_KEYS.SERVICES);
+    localStorage.removeItem(STORAGE_KEYS.PORTFOLIO);
+    localStorage.removeItem(STORAGE_KEYS.TESTIMONIALS);
   };
 
   return (
-    <DataContext.Provider
-      value={{
-        assets,
-        siteInfo,
-        founderInfo,
-        services,
-        portfolio,
-        testimonials,
-        leads,
-        isSyncingRemote,
-        lastSyncTime,
-        syncFromRemote,
-        updateAssets,
-        updateSiteInfo,
-        addLead,
-        updateFounderInfo,
-        updateSocials,
-        addService,
-        updateService,
-        deleteService,
-        addPortfolioItem,
-        updatePortfolioItem,
-        deletePortfolioItem,
-        addTestimonial,
-        updateTestimonial,
-        deleteTestimonial,
-        resetToDefault
-      }}
-    >
+    <DataContext.Provider value={{
+      assets,
+      siteInfo,
+      founderInfo,
+      services,
+      portfolio,
+      testimonials,
+      leads,
+      isLoading,
+      isSyncingRemote,
+      fetchError,
+      lastSyncTime,
+      syncFromRemote,
+      updateAssets,
+      updateSiteInfo,
+      addLead,
+      updateFounderInfo,
+      updateSocials,
+      addService,
+      updateService,
+      deleteService,
+      addPortfolioItem,
+      updatePortfolioItem,
+      deletePortfolioItem,
+      addTestimonial,
+      updateTestimonial,
+      deleteTestimonial,
+      resetToDefault
+    }}>
       {children}
     </DataContext.Provider>
   );
 };
 
-export const useSiteData = () => {
+export const useData = () => {
   const context = useContext(DataContext);
   if (!context) {
-    throw new Error('useSiteData must be used within a DataProvider');
+    throw new Error('useData must be used within a DataProvider');
   }
   return context;
 };
+
+export const useSiteData = useData;

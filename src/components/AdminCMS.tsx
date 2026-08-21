@@ -293,9 +293,16 @@ export const AdminCMS: React.FC<AdminCMSProps> = ({ onNavigate }) => {
     }
   };
 
-  // Publish content.json to GitHub via Cloudflare Worker & Save to Local AI Studio Disk
+  // Publish content to GitHub via Cloudflare Worker
   const handlePublishToGitHub = async () => {
+    if (!workerUrl) {
+      setIsSettingsOpen(true);
+      showToast('請先在設定中輸入 Cloudflare Worker 代理網址', 'error');
+      return;
+    }
+
     setIsPublishing(true);
+    const apiBase = workerUrl.replace(/\/+$/, '');
 
     const payload = {
       content: {
@@ -306,46 +313,26 @@ export const AdminCMS: React.FC<AdminCMSProps> = ({ onNavigate }) => {
       message: `[CMS] 更新視覺素材與 ${portfolio.length} 筆作品集 (${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })})`
     };
 
-    // 1. Always save to local container filesystem so AI Studio files match GitHub
     try {
-      await fetch('/api/save-local-content', {
+      const res = await fetch(`${apiBase}/api/save`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`
+        },
         body: JSON.stringify(payload)
       });
-    } catch (e) {
-      console.warn('Local file save warning:', e);
-    }
 
-    // 2. If Worker URL configured, also publish to GitHub
-    if (workerUrl) {
-      const apiBase = workerUrl.replace(/\/+$/, '');
-
-      try {
-        const res = await fetch(`${apiBase}/api/save`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${adminToken}`
-          },
-          body: JSON.stringify(payload)
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.details || data.error || 'GitHub 儲存失敗');
-        }
-
-        window.dispatchEvent(new Event('cinedimension_content_updated'));
-        showToast('🎉 發佈成功！GitHub content.json 與 AI Studio 本地檔案已同步更新！', 'success');
-      } catch (err: any) {
-        showToast(`GitHub 雲端發佈失敗：${err.message}（本機檔案已保存）`, 'error');
-      } finally {
-        setIsPublishing(false);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.details || data.error || 'GitHub 儲存失敗');
       }
-    } else {
+
       window.dispatchEvent(new Event('cinedimension_content_updated'));
-      showToast('🎉 已成功寫入 AI Studio 本機 content.json！請至設定配置 Worker 以自動推送到 GitHub', 'success');
+      showToast('🎉 發佈成功！GitHub content.json 已更新，前台即時動態同步！', 'success');
+    } catch (err: any) {
+      showToast(`GitHub 雲端發佈失敗：${err.message}`, 'error');
+    } finally {
       setIsPublishing(false);
     }
   };
@@ -1181,87 +1168,32 @@ export const AdminCMS: React.FC<AdminCMSProps> = ({ onNavigate }) => {
 
             <div className="space-y-4 text-xs max-h-[70vh] overflow-y-auto pr-1">
               
-              {/* GitHub ↔ AI Studio Sync Tools */}
+              {/* GitHub ↔ Dynamic Remote Sync Tools */}
               <div className="p-3.5 bg-amber-950/20 border border-amber-500/30 rounded-xl space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-amber-300 flex items-center gap-1.5 text-xs">
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>GitHub ↔ AI Studio 雙向同步工具</span>
+                    <span>GitHub 雲端動態同步工具</span>
                   </span>
                   <span className="text-[10px] px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded font-mono">
-                    自動防覆蓋
+                    動態讀取
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed">
-                  若您在線上後台更新了照片（Logo、肖像或作品），回到 AI Studio 要修改網站前，可點擊下方按鈕拉取最新資料，避免推送至 GitHub 時發生資料不一致或衝突。
+                  本網站已採用「程式碼與資料徹底分離」架構，專案中無任何靜態資料檔案。點擊下方按鈕可強制從 GitHub 重新拉取最新照片與作品資料。
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <div className="pt-1">
                   <button
                     type="button"
                     onClick={async () => {
                       showToast('正在從 GitHub 拉取最新檔案...', 'info');
-                      try {
-                        const res = await fetch('/api/sync-github-content');
-                        const data = await res.json();
-                        await syncFromRemote();
-                        if (data.success) {
-                          showToast('✅ 成功從 GitHub 拉取並覆寫 AI Studio 本地檔案！', 'success');
-                        } else {
-                          showToast('已從雲端同步最新內容！', 'success');
-                        }
-                      } catch (e: any) {
-                        await syncFromRemote();
-                        showToast('已自雲端刷新內容', 'success');
-                      }
+                      await syncFromRemote();
+                      showToast('✅ 成功同步最新遠端內容！', 'success');
                     }}
-                    className="px-3 py-2 bg-amber-600/90 hover:bg-amber-500 text-slate-950 font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm"
+                    className="w-full px-3 py-2 bg-amber-600/90 hover:bg-amber-500 text-slate-950 font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm"
                   >
                     <DownloadCloud className="w-3.5 h-3.5" />
-                    <span>從 GitHub 完整拉取</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        const payload = { siteInfo, assets, portfolio };
-                        const res = await fetch('/api/save-local-content', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify(payload)
-                        });
-                        if (res.ok) {
-                          showToast('✅ 已同步寫入 AI Studio 本機 content.json！', 'success');
-                        }
-                      } catch (e: any) {
-                        showToast(`寫入錯誤：${e.message}`, 'error');
-                      }
-                    }}
-                    className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-all"
-                  >
-                    <Save className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>寫入 AI Studio 本機</span>
-                  </button>
-                </div>
-
-                <div className="pt-1 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const payload = { siteInfo, assets, portfolio };
-                      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `content-${new Date().toISOString().slice(0, 10)}.json`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                      showToast('已下載 content.json 備份檔', 'info');
-                    }}
-                    className="text-[11px] text-amber-400 hover:text-amber-300 underline flex items-center gap-1"
-                  >
-                    <Download className="w-3 h-3" />
-                    <span>下載目前 content.json 備份</span>
+                    <span>立即從 GitHub 雲端重新整理</span>
                   </button>
                 </div>
               </div>

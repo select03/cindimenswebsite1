@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Dynamic Content Data (Managed exclusively by CMS / Cloudflare Worker / GitHub, not by AI Studio commits)
+content.json
+public/content.json
+
